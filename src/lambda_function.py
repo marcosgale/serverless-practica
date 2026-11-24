@@ -42,7 +42,7 @@ def lambda_handler(event, context):
     print(f"Evento recibido: {json.dumps(event, default=str)}")
 
     return {
-        "statusCode": 500,
+        "statusCode": 200,
         "headers": {
             "Content-Type": "application/json"
         },
