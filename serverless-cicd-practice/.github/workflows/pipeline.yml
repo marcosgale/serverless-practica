@@ -1,0 +1,96 @@
+name: CI/CD Lambda
+
+on:
+  push:
+    branches: [main]
+
+  pull_request:
+    branches: [main]
+
+  workflow_dispatch:
+
+jobs:
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -v tests/
+
+
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build zip
+        run: |
+          cd src
+          zip -r ../function.zip .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: function-zip
+          path: function.zip
+
+
+  deploy:
+    needs: package
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    env:
+      FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME || 'hello-fn' }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: function-zip
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://function.zip
+
+          aws lambda wait function-updated \
+            --function-name "$FUNCTION_NAME"
+
+      - name: Smoke test
+        run: |
+          aws lambda invoke \
+            --function-name "$FUNCTION_NAME" \
+            --payload '{"name":"pipeline"}' \
+            --cli-binary-format raw-in-base64-out \
+            response.json
+
+          cat response.json
+
+          test "$(jq -r '.statusCode' response.json)" = "200"
